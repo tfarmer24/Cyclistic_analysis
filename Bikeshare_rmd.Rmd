@@ -1,0 +1,249 @@
+---
+title: "bikeshare_analysis"
+author: "Thomas Farmer"
+date: "`r Sys.Date()`"
+output:
+  html_document: default
+  
+---
+
+## Setting up my enviroment
+```{r}
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+install.packages("tidyverse")
+install.packages("janitor")
+install.packages("dplyr")
+library(tidyverse)
+library(janitor)
+library(dplyr)
+```
+## Import Data
+Here all i did was upload the csv files containing our datasets to the enviroments pane in Rstudio.
+
+## Combine Data Frames
+Next i combined the two data frames to make them easier to work with by using the following code
+```{r}
+bike_trips_df <- bind_rows(trips_2019,trips_2020)
+```
+ Now we have 1 data frame to work with named bike_trips that we can easily work with.
+ 
+## Data cleaning
+These are basic data cleaning techniques in R to remove empty columns and rows. Then we filtered out empty spaces in the start_station_name column as it will be one of our main points of analysis. To do all of this, use the following code. This data cleaning brought our total number of rows from 791,956 to 426,887.
+
+```{r}
+bike_trips_df <- janitor ::remove_empty(bike_trips_df,which = c("cols"))
+bike_trips_df <- janitor::remove_empty(bike_trips_df,which = c("rows"))
+bike_trips_df <- bike_trips_df  %>% filter(start_station_name !="")
+```
+
+## New Column for bike ride duration
+i decided to create a column for 'Hours' as well as a coulmn for 'Minutes'to represent the length of time bike trips are lasting so that we can add it to our main data points. To do so the following code was used.
+```{r}
+bike_trips_df$Hours <- difftime(bike_trips_df$ended_at,bike_trips_df$started_at,units = c("hours"))
+
+bike_trips_df$Minutes <- difftime(bike_trips_df$ended_at,bike_trips_df$started_at,units = c("mins"))
+
+bike_trips_df <- bike_trips_df %>% filter(Minutes >0)
+```
+
+## Convert Date/Time formatting
+its important for us to understand as much as we can about the time, the season and the duration of bike trips so for that reason i dedided we should convert the Time/Date formating to new columns called 'Ymd','Started at', 'Ended at','Start Hour'and 'End Hour' so we can easily measure time duration.  
+```{r}
+bike_trips_df$Ymd <- as.Date(bike_trips_df$started_at)
+bike_trips_df$started_at <- lubridate::ymd_hms(bike_trips_df$started_at)
+bike_trips_df$ended_at <- lubridate::ymd_hms(bike_trips_df$ended_at)
+
+bike_trips_df$start_hour <- lubridate::hour(bike_trips_df$started_at)
+bike_trips_df$end_hour <- lubridate::hour(bike_trips_df$ended_at)
+```
+## Create a Summary Data Frame
+```{r}
+biketrips2 <- bike_trips_df %>% 
+  group_by(Weekly = floor_date(started_at, "week"), start_hour) %>%
+  summarise(
+    Minutes = sum(Minutes),
+    Mean = mean(Minutes),
+    Median = median(Minutes),
+    Max = max(Minutes),
+    Min = min(Minutes),
+    Count = n(),
+    .groups = "drop")
+```
+
+## Hourly Counts (Minuets)
+```{r}
+summary(biketrips2$Count)
+```
+## Month Column
+```{r}
+biketrips2$Month <- lubridate::month(biketrips2$Weekly)
+```
+
+## Moving Average
+```{r}
+biketrips2$CntMA <- forecast::ma(biketrips2$Count,28)
+```
+
+## Visualizations
+
+Count of rides by Hours viz
+
+```{r}
+biketrips2 %>% ggplot() + geom_col(aes(x=start_hour,y=Count)) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Count of Rides by Hours",
+       y="Rides per Hour") 
+
+
+```
+## Count of rides per day visualization
+```{r}
+biketrips2 %>% ggplot() + geom_col(aes(x=Weekly,y=Count)) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Count of Rides per Day",
+       subtitle = "Bases on 28 day moving average",
+       y="Average rides per day")  
+```
+## Rides by bike type
+```{r}
+biketype <- bike_trips_df %>% 
+  group_by(member_casual, rideable_type, Weekly = floor_date(started_at, "week")) %>%
+  summarise(
+    Minutes = sum(Minutes),
+    Mean = mean(Minutes),
+    Median = median(Minutes),
+    Max = max(Minutes),
+    Min = min(Minutes),
+    Count = n(),
+    .groups = "drop"  # Use .groups argument to drop the grouping
+  )
+
+```
+## Visualization Rides by bike type
+```{r}
+ggplot(biketype) + geom_area(aes(x=Weekly,y=Count,col=rideable_type)) +
+  scale_y_continuous(labels = comma) +
+  labs(title="Count of Rides by Bike Type")
+```
+## Top 20 Start Stations 
+```{r}
+bike_trips_df %>% count(start_station_name, sort = TRUE) %>%
+  top_n(20) %>% ggplot() + geom_col(aes(x=reorder(start_station_name,n),y=n)) +
+  coord_flip() + labs(title = "Top 20 Start Stations by Ride Count",
+                      y = "Count of Rides",x="Station Name") +
+  scale_y_continuous(labels = comma)
+```
+## Top 20 stations with casual/member variable
+```{r}
+bike_trips_df %>%
+  count(start_station_name, member_casual, sort = TRUE) %>%
+  top_n(20) %>%
+  ggplot() + 
+  geom_col(aes(x = reorder(start_station_name, n), y = n, fill = member_casual)) +
+  coord_flip() + 
+  labs(title = "Top 20 Start Stations by Ride Count",
+       y = "Count of Rides", x = "Station Name") +
+  scale_y_continuous(labels = comma)
+```
+
+## Rides by Rider Type
+```{r}
+ggplot(biketype) + geom_col(aes(x=Weekly,y=Count,fill=member_casual)) +
+  scale_y_continuous(labels = comma) +
+  labs(title="Count of Rides by Rider Type")
+```
+## Number of rides by Rider Type
+```{r}
+bike_trips_df %>%
+  mutate(weekday = wday(started_at, label = TRUE)) %>%
+  group_by(member_casual, weekday) %>%
+  summarise(
+    number_of_rides = n(),
+    average_duration = mean(Minutes)
+  ) %>%
+  arrange(member_casual, weekday) %>%
+  ggplot(aes(x = weekday, y = number_of_rides, fill = member_casual)) +
+  geom_col(position = position_dodge()) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(
+    title = "Total Annual Rides by Weekday",
+    x = "Weekday",
+    y = "Number of Rides",
+    fill = "Member Type"
+  )
+```
+
+## Average Trip Duration
+```{r}
+bike_trips_df %>%
+  mutate(weekday = wday(started_at, label = TRUE)) %>%
+  group_by(member_casual, weekday, .groups = "drop") %>%
+  summarise(
+    number_of_rides = n(),
+    average_duration = mean(Minutes)
+  ) %>%
+  arrange(member_casual, weekday) %>%
+  ggplot(aes(x = weekday, y = average_duration / 60, fill = member_casual)) +
+  geom_col(position = position_dodge()) +
+  scale_y_continuous(labels = scales::comma, name = "Average Duration (hours)") +
+  labs(
+    title = "Average Annual Ride Duration by Weekday",
+    x = "Weekday",
+    fill = "Member Type"
+  )
+```
+
+## Summary of Analysis
+Over the course of the year, it's evident that members of the bike-sharing service ride more frequently than casual users. This pattern suggests that members tend to rely on the service as part of their regular routine, whereas casual users engage with it more sporadically.
+
+Looking at specific days, members show a clear preference for riding between Tuesday and Thursday. This trend aligns with typical weekday commuting patterns, indicating that many members likely use the bikes to travel to and from work.
+
+Regardless of membership status, ridership consistently peaks between 3 p.m. and 6 p.m. These hours appear to be popular for a range of activities, such as casual outings or errands.
+
+Distinct usage patterns also emerge when examining popular stations. Members commonly start or end their rides at Kingsbury and Kinzie St., while casual users favor Streeter Dr. and Grand Ave. These differences may reflect each group's residential areas or preferred destinations.
+
+Casual users are more active on weekends, suggesting they primarily use the service for leisure or recreational purposes. In contrast, members demonstrate a more consistent usage pattern throughout the week.
+
+Interestingly, casual users tend to take longer rides on average than members. This may indicate a greater interest in exploration or longer, more leisurely trips.
+
+Seasonal trends also play a role in ridership. July sees the highest number of rides, likely due to favorable weather, while December experiences a notable drop, possibly due to colder temperatures.
+
+Saturdays stand out as the most popular day for riding among both groups. Notably, casual users slightly outnumber members on this day, highlighting Saturday as a key time for recreational use, especially among non-members
+
+## Reccomendations
+The marketing strategy should prioritize increasing awareness of membership benefits while attracting casual users through targeted promotions in high-traffic areas. By focusing efforts on locations with high casual user activity, campaigns can achieve greater impact while keeping costs in check.
+
+Strategic incentives should be introduced to encourage casual riders to convert to members. Highlighting key membership advantages—such as cost savings, reduced environmental impact, and improved health through low-impact exercise—can effectively appeal to potential members and drive conversions.
+
+To further enhance strategy effectiveness, conduct targeted surveys across different user segments. Leveraging data on user hotspots will enable the collection of specific, actionable feedback. These insights will deepen understanding of user behavior, preferences, and pain points, leading to more informed decisions and better-tailored marketing initiatives.
+ 
+## How do annual members and casual riders use Cyclistic differently?
+Its important to note that the data is a few years old so we couldve seen plenty of changes by now, however what we have tells us alot! This is a summary of our key findings: 
+
+.Members prefer riding on weekdays, with the most frequent rides occurring from Tuesday to Thursday. In contrast, casual users prefer weekends, particularly Saturdays, suggesting different usage patterns for both groups.
+
+.Kingsbury and Kinzie St. are the top start and end stations for members, whereas Streeter Dr. and Grand Ave. are preferred by casual users. Station preferences may align with the locations of residential and commercial areas frequented by each group.
+
+.Classic bikes are the most preferred bike type among both members and casual users, indicating a preference for traditional biking options.
+
+.Both groups commonly ride between 3-6 p.m., likely corresponding to the late afternoon when many people use the service for various activities.
+
+.April to October is the preferred period for both members and casual users, likely due to favorable weather conditions during these months.
+
+.July is the most popular month, likely due to summer weather and increased outdoor activities. December records the lowest ridership, possibly due to colder weather and holiday-related factors.
+
+.Saturday is the most popular day of the week across all users, and it is the only day when casual users slightly surpass members in usage, although the difference is marginal.
+
+.It is important to consider these findings when formulating strategies and making data-driven decisions to better serve both member and casual user segments effectively.
+
+
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
