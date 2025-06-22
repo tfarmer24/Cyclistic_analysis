@@ -9,7 +9,6 @@ output:
 
 ## Setting up my enviroment
 ```{r}
-options(repos = c(CRAN = "https://cloud.r-project.org"))
 install.packages("tidyverse")
 install.packages("janitor")
 install.packages("dplyr")
